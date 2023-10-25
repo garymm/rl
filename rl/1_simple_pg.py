@@ -8,15 +8,6 @@ import gym
 from gym.spaces import Discrete, Box
 
 
-def mlp(sizes, activation=nn.Tanh, output_activation=nn.Identity):
-    # Build a feedforward neural network.
-    layers = []
-    for j in range(len(sizes) - 1):
-        act = activation if j < len(sizes) - 2 else output_activation
-        layers += [nn.Linear(sizes[j], sizes[j + 1]), act()]
-    return nn.Sequential(*layers)
-
-
 def train(
     env_name="CartPole-v0",
     hidden_sizes=[32],
@@ -38,24 +29,24 @@ def train(
     n_acts = env.action_space.n
 
     # make core of policy network
-    logits_net = mlp(sizes=[obs_dim] + hidden_sizes + [n_acts])
+    logits_net = None  # TODO
 
     # make function to compute action distribution
     def get_policy(obs):
-        logits = logits_net(obs)
-        return Categorical(logits=logits)
+        # TODO
+        pass
 
     # make action selection function (outputs int actions, sampled from policy)
     def get_action(obs):
-        return get_policy(obs).sample().item()
+        pass  # TODO
 
     # make loss function whose gradient, for the right data, is policy gradient
     def compute_loss(obs, act, weights):
-        logp = get_policy(obs).log_prob(act)
-        return -(logp * weights).mean()
+        # TODO
+        pass
 
     # make optimizer
-    optimizer = Adam(logits_net.parameters(), lr=lr)
+    optimizer = None  # TODO
 
     # for training policy
     def train_one_epoch():
