@@ -5,7 +5,7 @@ dependencies:
   - python=3.11
   - gymnasium-classic_control
   - equinox
-  - ml_dtypes==0.2.0
+  - ml_dtypes==0.2.0 # pinned to match jax-metal version
   - pip
   - pip:
     - jax-metal==0.0.4 # Note: only works on MacOS
