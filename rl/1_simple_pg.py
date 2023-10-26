@@ -20,12 +20,25 @@ def make_mlp(layer_dims: list[int], prng_key: Array) -> eqx.Module:
     return eqx.nn.Sequential(layers)
 
 
+def compute_loss(
+    logits_net: eqx.Module,
+    obs: Float[Array, "batch obs"],
+    acts: Int[Array, "batch"],
+    weights: Float[Array, "batch t"],
+) -> float:
+    """loss function whose gradient, for the right data, is policy gradient"""
+    logits = jax.vmap(logits_net)(obs)
+    log_probs = jax.vmap(jax.nn.log_softmax)(logits)
+    log_probs_for_actions = log_probs[:, acts]
+    return -np.mean(weights * log_probs_for_actions)
+
+
 def train(
     env_name: str,
     render: bool,
     lr: float,
     hidden_sizes=[32],
-    epochs=50,
+    epochs=500,
     batch_size=5000,
 ):
     # make environment, check spaces, get obs / act dims
@@ -45,19 +58,8 @@ def train(
     logits_net = make_mlp([obs_dim] + hidden_sizes + [n_acts], prng_key)
 
     # make action selection function (outputs int actions, sampled from policy)
-    def get_action(obs: Float[Array, str(obs_dim)]) -> int:
-        return jax.random.categorical(prng_key, logits_net(obs)).item()
-
-    # make loss function whose gradient, for the right data, is policy gradient
-    def compute_loss(
-        obs: Float[Array, "batch " + str(obs_dim)],
-        acts: Int[Array, "batch"],
-        weights: Float[Array, "batch t"],
-    ):
-        logits = jax.vmap(logits_net)(obs)
-        log_probs = jax.vmap(jax.nn.log_softmax)(logits)
-        log_probs_for_actions = log_probs[:, acts]
-        return -np.mean(weights * log_probs_for_actions)
+    def get_action(model: eqx.Module, obs: Float[Array, str(obs_dim)]) -> int:
+        return jax.random.categorical(prng_key, model(obs)).item()
 
     # make optimizer
     optimizer = optax.adamw(lr)
@@ -74,7 +76,7 @@ def train(
 
     # for training policy
     # TODO: @eqx.filter_jit
-    def train_one_epoch():
+    def train_one_epoch(model: eqx.Module, opt_state: optax.OptState) -> tuple[float]:
         # make some empty lists for logging.
         batch_obs = []  # for observations
         batch_acts = []  # for actions
@@ -102,7 +104,7 @@ def train(
             batch_obs.append(obs.copy())
 
             # act in the environment
-            act = get_action(np.asarray(obs, dtype=np.float32))
+            act = get_action(model, np.asarray(obs, dtype=np.float32))
             obs, rew, done, _, _ = env.step(act)
 
             # save action, reward
@@ -129,19 +131,23 @@ def train(
                     break
 
         # take a single policy gradient update step
-        # optimizer.zero_grad()
-        batch_loss = compute_loss(
+        batch_loss, grads = eqx.filter_value_and_grad(compute_loss)(
+            model,
             np.asarray(batch_obs, dtype=np.float32),
             np.asarray(batch_acts, dtype=np.int32),
             np.asarray(batch_weights, dtype=np.float32),
         )
-        # batch_loss.backward()
-        # optimizer.step()
-        return batch_loss, np.asarray(batch_rets), np.asarray(batch_lens)
+        updates, opt_state = optimizer.update(grads, opt_state, model)
+        model = eqx.apply_updates(model, updates)
+        return model, opt_state, batch_loss, np.asarray(batch_rets), np.asarray(
+            batch_lens
+        )
 
     # training loop
     for i in range(epochs):
-        batch_loss, batch_rets, batch_lens = train_one_epoch()
+        logits_net, opt_state, batch_loss, batch_rets, batch_lens = train_one_epoch(
+            logits_net, opt_state
+        )
         print(
             "epoch: %3d \t loss: %.3f \t return: %.3f \t ep_len: %.3f"
             % (i, batch_loss, np.mean(batch_rets), np.mean(batch_lens))
