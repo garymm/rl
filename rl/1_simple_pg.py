@@ -10,7 +10,7 @@ from jaxtyping import Array, Float, Int
 
 
 def make_mlp(layer_dims: list[int], prng_key: Array) -> eqx.Module:
-    layers: list[eqx.nn.Linear] = []
+    layers: list[eqx.Module] = []
     for i in range(len(layer_dims) - 1):
         layers.append(eqx.nn.Linear(layer_dims[i], layer_dims[i + 1], key=prng_key))
         if i < len(layer_dims) - 2:
