@@ -1,20 +1,35 @@
 # Based on https://github.com/openai/spinningup/blob/038665d62d569055401d91856abb287263096178/spinup/examples/pytorch/pg_math/1_simple_pg.py
-import jax.numpy as np
+import equinox as eqx
 import gymnasium
-from gymnasium.spaces import Discrete, Box
-from jaxtyping import Array, Float, Int, PyTree  # https://github.com/google/jaxtyping
+import jax
+import jax.numpy as np
+import optax
+import pygame
+from gymnasium.spaces import Box, Discrete
+from jaxtyping import Array, Float, Int
+
+
+def make_mlp(layer_dims: list[int], prng_key: Array) -> eqx.Module:
+    layers: list[eqx.nn.Linear] = []
+    for i in range(len(layer_dims) - 1):
+        layers.append(eqx.nn.Linear(layer_dims[i], layer_dims[i + 1], key=prng_key))
+        if i < len(layer_dims) - 2:
+            layers.append(eqx.nn.Lambda(np.tanh))
+        else:
+            layers.append(eqx.nn.Identity())
+    return eqx.nn.Sequential(layers)
 
 
 def train(
-    env_name="CartPole-v0",
+    env_name: str,
+    render: bool,
+    lr: float,
     hidden_sizes=[32],
-    lr=1e-2,
     epochs=50,
     batch_size=5000,
-    render=False,
 ):
     # make environment, check spaces, get obs / act dims
-    env = gymnasium.make(env_name, render_mode="human")
+    env = gymnasium.make(env_name, render_mode="rgb_array")
     assert isinstance(
         env.observation_space, Box
     ), "This example only works for envs with continuous state spaces."
@@ -26,26 +41,39 @@ def train(
     n_acts = env.action_space.n
 
     # make core of policy network
-    logits_net = None  # TODO
-
-    # make function to compute action distribution
-    def get_policy(obs):
-        # TODO
-        pass
+    prng_key = jax.random.key(0)
+    logits_net = make_mlp([obs_dim] + hidden_sizes + [n_acts], prng_key)
 
     # make action selection function (outputs int actions, sampled from policy)
-    def get_action(obs: Float[Array, str(obs_dim)]):
-        return 0  # TODO
+    def get_action(obs: Float[Array, str(obs_dim)]) -> int:
+        return jax.random.categorical(prng_key, logits_net(obs)).item()
 
     # make loss function whose gradient, for the right data, is policy gradient
-    def compute_loss(obs, act, weights):
-        # TODO
-        pass
+    def compute_loss(
+        obs: Float[Array, "batch " + str(obs_dim)],
+        acts: Int[Array, "batch"],
+        weights: Float[Array, "batch t"],
+    ):
+        logits = jax.vmap(logits_net)(obs)
+        log_probs = jax.vmap(jax.nn.log_softmax)(logits)
+        log_probs_for_actions = log_probs[:, acts]
+        return -np.mean(weights * log_probs_for_actions)
 
     # make optimizer
-    optimizer = None  # TODO
+    optimizer = optax.adamw(lr)
+    opt_state = optimizer.init(eqx.filter(logits_net, eqx.is_array))
+
+    surface = None
+    if render:
+        env.reset()
+        pixels = env.render().transpose(1, 0, 2)
+        pygame.init()
+        surface = pygame.display.set_mode(
+            (pixels.shape[0], pixels.shape[1]), pygame.DOUBLEBUF
+        )
 
     # for training policy
+    # TODO: @eqx.filter_jit
     def train_one_epoch():
         # make some empty lists for logging.
         batch_obs = []  # for observations
@@ -66,7 +94,9 @@ def train(
         while True:
             # rendering
             if (not finished_rendering_this_epoch) and render:
-                env.render()
+                pixels = env.render().transpose(1, 0, 2)
+                pygame.pixelcopy.array_to_surface(surface, pixels)
+                pygame.display.flip()
 
             # save obs
             batch_obs.append(obs.copy())
@@ -101,9 +131,9 @@ def train(
         # take a single policy gradient update step
         # optimizer.zero_grad()
         batch_loss = compute_loss(
-            obs=np.asarray(batch_obs, dtype=np.float32),
-            act=np.asarray(batch_acts, dtype=np.int32),
-            weights=np.asarray(batch_weights, dtype=np.float32),
+            np.asarray(batch_obs, dtype=np.float32),
+            np.asarray(batch_acts, dtype=np.int32),
+            np.asarray(batch_weights, dtype=np.float32),
         )
         # batch_loss.backward()
         # optimizer.step()
@@ -112,10 +142,10 @@ def train(
     # training loop
     for i in range(epochs):
         batch_loss, batch_rets, batch_lens = train_one_epoch()
-        # print(
-        #     "epoch: %3d \t loss: %.3f \t return: %.3f \t ep_len: %.3f"
-        #     % (i, batch_loss, np.mean(batch_rets), np.mean(batch_lens))
-        # )
+        print(
+            "epoch: %3d \t loss: %.3f \t return: %.3f \t ep_len: %.3f"
+            % (i, batch_loss, np.mean(batch_rets), np.mean(batch_lens))
+        )
 
 
 if __name__ == "__main__":
