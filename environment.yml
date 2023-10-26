@@ -2,10 +2,14 @@ name: rl
 channels:
   - conda-forge
 dependencies:
-  - python=3.11
-  - gymnasium-classic_control
   - equinox
+  - gymnasium-classic_control
+  - jaxlib=0.4.11 # pinned to match jax-metal version
+  - jax=0.4.11 # pinned to match jax-metal version
+  - jaxtyping=0.2.22
   - ml_dtypes=0.2.0 # pinned to match jax-metal version
+  - optax
   - pip
+  - python=3.10
   - pip:
-    - jax-metal=0.0.4 # Note: only works on MacOS
+    - jax-metal==0.0.4 # Note: only works on MacOS
